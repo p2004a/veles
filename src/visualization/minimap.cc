@@ -23,12 +23,12 @@
 namespace veles {
 namespace visualization {
 
-VisualizationMinimap::VisualizationMinimap(QWidget *parent) :
+VisualizationMinimap::VisualizationMinimap(bool size_control, QWidget *parent) :
   QOpenGLWidget(parent), initialised_(false), gl_initialised_(false),
   sampler_(nullptr), rows_(0), cols_(0), selection_start_(0),
   selection_end_(0), top_line_pos_(1.0), bottom_line_pos_(-1.0),
   color_(k_default_color), mode_(k_default_mode), texture_(nullptr),
-  lines_texture_(nullptr) {}
+  lines_texture_(nullptr), size_control_(size_control) {}
 
 VisualizationMinimap::~VisualizationMinimap() {
   if (gl_initialised_) {
@@ -46,6 +46,12 @@ void VisualizationMinimap::setSampler(util::ISampler *sampler) {
   selection_end_ = (empty()) ? 0 : sampler_->getSampleSize();
   initialised_ = true;
   refresh();
+}
+
+QPair<size_t, size_t> VisualizationMinimap::getRange() {
+  if (empty()) return qMakePair(0, 0);
+  auto range = sampler_->getRange();
+  return qMakePair(range.first, range.second);
 }
 
 QPair<size_t, size_t> VisualizationMinimap::getSelectedRange() {
@@ -80,6 +86,7 @@ void VisualizationMinimap::refresh(bool has_context) {
 
 void VisualizationMinimap::setRange(size_t start, size_t end,
                                     bool reset_selection) {
+
   assert(!empty());
   sampler_->setRange(start, end);
   sample_size_ = sampler_->getSampleSize();
@@ -511,15 +518,15 @@ void VisualizationMinimap::mousePressEvent(QMouseEvent *event) {
     grab_bot = position >= blp_bottom && position <= blp_top,
     between = position < tlp_bottom && position > blp_top;
 
-  if (grab_top) {
+  if (grab_top && size_control_) {
     drag_state_ = DragState::TOP_LINE;
     return;
   }
-  if (grab_bot) {
+  if (grab_bot && size_control_) {
     drag_state_ = DragState::BOTTOM_LINE;
     return;
   }
-  if (between) {
+  if (between || (!size_control_ && (grab_top || grab_bot))) {
     drag_state_ = DragState::BOX;
     return;
   }

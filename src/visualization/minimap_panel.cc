@@ -14,6 +14,7 @@
  * limitations under the License.
  *
  */
+#include <algorithm>
 #include <cmath>
 #include <functional>
 
@@ -23,7 +24,6 @@
 
 #include "visualization/minimap_panel.h"
 
-
 namespace veles {
 namespace visualization {
 
@@ -31,16 +31,17 @@ const float k_minimum_auto_selection_size = 0.1f;
 
 typedef VisualizationMinimap::MinimapMode MinimapMode;
 
-MinimapPanel::MinimapPanel(QWidget *parent) :
-    QWidget(parent), mode_(MinimapMode::VALUE),
+MinimapPanel::MinimapPanel(QWidget *parent, bool size_control) :
+    QWidget(parent), size_control_(size_control), mode_(MinimapMode::VALUE),
     select_range_dialog_(new SelectRangeDialog(this)) {
-  minimaps_.push_back(new VisualizationMinimap(this));
+  minimaps_.push_back(new VisualizationMinimap(size_control_, this));
   connect(minimaps_[0], &VisualizationMinimap::selectionChanged,
           std::bind(&MinimapPanel::updateSelection, this,
                     0, std::placeholders::_1,
                     std::placeholders::_2));
-  connect(select_range_dialog_, &SelectRangeDialog::accepted,
-          this, &MinimapPanel::selectRange);
+  connect(select_range_dialog_, &SelectRangeDialog::accepted, [this] () {
+    selectRange(select_range_dialog_->getStartAddress(), select_range_dialog_->getEndAddress());
+  });
   initLayout();
 }
 
@@ -82,32 +83,40 @@ void MinimapPanel::initLayout() {
   }
   layout_->addLayout(minimaps_layout_);
 
-  select_range_button_ = new QPushButton("select range", this);
+  select_range_button_ = new QPushButton("select range");
   connect(select_range_button_, SIGNAL(released()),
           this, SLOT(showSelectRangeDialog()));
-  layout_->addWidget(select_range_button_);
 
-  auto button_layout = new QHBoxLayout();
+  if (size_control_) {
+    layout_->addWidget(select_range_button_);
+  }
+
+  button_layout_ = new QHBoxLayout();
   remove_minimap_button_ = new QPushButton();
   remove_minimap_button_->setIcon(QIcon(":/images/minus.png"));
   remove_minimap_button_->setEnabled(false);
   connect(remove_minimap_button_, SIGNAL(released()),
           this, SLOT(removeMinimap()));
-  button_layout->addWidget(remove_minimap_button_, 0);
-
-  change_mode_button_ = new QPushButton("mode", this);
+  if (size_control_) {
+    button_layout_->addWidget(remove_minimap_button_, 0);
+  }
+  change_mode_button_ = new QPushButton("mode");
   connect(change_mode_button_, SIGNAL(released()),
           this, SLOT(changeMinimapMode()));
-  button_layout->addWidget(change_mode_button_);
+  button_layout_->addWidget(change_mode_button_);
 
   add_minimap_button_ = new QPushButton();
   add_minimap_button_->setIcon(QIcon(":/images/plus.png"));
   connect(add_minimap_button_, SIGNAL(released()), this, SLOT(addMinimap()));
-  button_layout->addWidget(add_minimap_button_, 0);
-  button_layout->setSpacing(0);
-  button_layout->setContentsMargins(0, 0, 0, 0);
+  if (size_control_) {
+    button_layout_->addWidget(add_minimap_button_, 0);
+  }
+  button_layout_->setSpacing(0);
+  button_layout_->setContentsMargins(0, 0, 0, 0);
 
-  layout_->addLayout(button_layout);
+  layout_->addLayout(button_layout_);
+
+
   layout_->setSpacing(0);
   layout_->setContentsMargins(0, 0, 0, 0);
   setLayout(layout_);
@@ -129,7 +138,7 @@ VisualizationMinimap::MinimapColor MinimapPanel::getMinimapColor() {
 /*****************************************************************************/
 
 void MinimapPanel::addMinimap() {
-  auto new_minimap = new VisualizationMinimap(this);
+  auto new_minimap = new VisualizationMinimap(size_control_, this);
   auto new_sampler = minimap_samplers_.back()->clone();
   auto range = minimaps_.back()->getSelectedRange();
   new_sampler->setRange(range.first, range.second);
@@ -199,9 +208,7 @@ void MinimapPanel::showSelectRangeDialog() {
   select_range_dialog_->show();
 }
 
-void MinimapPanel::selectRange() {
-  size_t start = select_range_dialog_->getStartAddress();
-  size_t end = select_range_dialog_->getEndAddress();
+void MinimapPanel::selectRange(size_t start, size_t end) {
   size_t center = start + ((end - start) / 2);
   size_t size = end - start;
   size_t curr_start = 0;
@@ -244,6 +251,51 @@ void MinimapPanel::selectRange() {
 
   while (minimaps_.size() > index + 1) {
     removeMinimap();
+  }
+}
+
+void MinimapPanel::createMinimaps(size_t selection_size, int grow_factor) {
+  size_t full_size = sampler_->getFileOffset(sampler_->getSampleSize());
+  QVector<size_t> minimap_sizes;
+  QVector<size_t> minimap_selection_sizes;
+  size_t curr_size = selection_size;
+
+  do {
+    minimap_selection_sizes.append(std::min(full_size, curr_size));
+    curr_size = std::min(static_cast<size_t>(curr_size * grow_factor), full_size);
+    minimap_sizes.append(curr_size);
+  } while (curr_size < full_size);
+
+  int index = 0;
+  while(index < minimap_sizes.size()) {
+    if (index >= minimaps_.size()) {
+      addMinimap();
+    }
+    minimaps_[index]->setRange(0, minimap_sizes[minimap_sizes.size() - index - 1]);
+    minimaps_[index]->setSelectedRange(0, minimap_selection_sizes[minimap_selection_sizes.size() - index - 1]);
+    ++index;
+  }
+  while (minimaps_.size() > index + 1) {
+    removeMinimap();
+  }
+}
+
+void MinimapPanel::scrollTo(size_t start) {
+  for (int index = minimaps_.size() - 1; index >= 0; --index) {
+    auto range = minimaps_[index]->getRange();
+    auto selected_range = minimaps_[index]->getSelectedRange();
+
+    if (selected_range.first == start) {
+      break;
+    }
+
+    auto minimap_size = range.second - range.first;
+    auto selection_size = selected_range.second - selected_range.first;
+    size_t offset = start % (minimap_size - selection_size);
+    size_t minimap_start = start - offset;
+    minimaps_[index]->setRange(minimap_start, minimap_start + minimap_size);
+    minimaps_[index]->setSelectedRange(minimap_start + offset, minimap_start + offset + selection_size);
+    start = minimap_start;
   }
 }
 

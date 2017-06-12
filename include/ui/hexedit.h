@@ -74,6 +74,7 @@ public slots:
  signals:
   void selectionChanged(qint64 start_addr, qint64 selection_size);
   void editStateChanged(bool has_changes, bool has_undo);
+  void visibleRegionChanged(qint64 start_addr, qint64 region_size);
 
  private:
   FileBlobModel *dataModel_;
@@ -120,6 +121,7 @@ public slots:
   /** Number of first pixel from left which should be displayed on the screen */
   qint64 startPosX_;
 
+
   enum class WindowArea {
     ADDRESS,
     HEX,
@@ -151,6 +153,9 @@ public slots:
   QScopedPointer<util::encoders::HexEncoder> hexEncoder_;
   QScopedPointer<util::encoders::TextEncoder> textEncoder_;
   util::EditEngine edit_engine_;
+
+  qint64 visible_region_start_;
+  qint64 visible_region_size_;
 
   void recalculateValues();
   void initParseMenu();

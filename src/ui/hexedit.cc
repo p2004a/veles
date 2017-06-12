@@ -37,6 +37,7 @@ static const qint64 endMargin_ = 10;
 static const qint64 cursor_blink_time_ = 500;
 
 void HexEdit::recalculateValues() {
+
   charWidht_ = fontMetrics().width(QLatin1Char('2'));
   charHeight_ = fontMetrics().height();
 
@@ -73,6 +74,16 @@ void HexEdit::recalculateValues() {
 
   horizontalScrollBar()->setRange(0, lineWidth_ - viewport()->width());
   startPosX_ = horizontalScrollBar()->value();
+
+  bool visible_region_start_changed = visible_region_start_ != startRow_ * bytesPerRow_;
+  bool visible_region_size_changed = visible_region_size_ != rowsOnScreen_ * bytesPerRow_;
+
+  visible_region_start_ = startRow_ * bytesPerRow_;
+  visible_region_size_ = rowsOnScreen_ * bytesPerRow_;
+
+  if (visible_region_start_changed || visible_region_size_changed) {
+    emit visibleRegionChanged(visible_region_start_, visible_region_size_);
+  }
 }
 
 void HexEdit::resizeEvent(QResizeEvent *event) {
@@ -108,7 +119,9 @@ HexEdit::HexEdit(FileBlobModel *dataModel, QItemSelectionModel *selectionModel,
       selection_size_(0),
       current_area_(WindowArea::HEX),
       cursor_pos_in_byte_(0),
-      cursor_visible_(false) {
+      cursor_visible_(false),
+      visible_region_start_(0),
+      visible_region_size_(0) {
   setFont(util::settings::theme::font());
 
   connect(dataModel_, &FileBlobModel::newBinData,
@@ -1067,6 +1080,9 @@ bool HexEdit::isByteVisible(qint64 bytePos) {
 
 void HexEdit::scrollToByte(qint64 bytePos, bool minimal_change) {
   if (isByteVisible(bytePos) && minimal_change) {
+    return;
+  }
+  if (bytePos >= dataBytesCount_) {
     return;
   }
 
