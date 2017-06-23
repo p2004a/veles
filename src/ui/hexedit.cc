@@ -597,12 +597,12 @@ QColor HexEdit::byteBackroundColorFromPos(qint64 pos) {
 }
 
 void HexEdit::drawBorder(qint64 start, qint64 size, bool asciiArea,
-                         bool doted) {
+                         bool dotted) {
   QPainter painter(viewport());
 
   auto oldPen = painter.pen();
   auto newPen = QPen(oldPen.color());
-  if (doted) {
+  if (dotted) {
     newPen.setStyle(Qt::DashLine);
   }
   painter.setPen(newPen);
@@ -704,8 +704,12 @@ void HexEdit::paintEvent(QPaintEvent *event) {
   for (auto rowNum = startRow_;
        rowNum < qMin(startRow_ + rowsOnScreen_, rowsCount_); ++rowNum) {
     auto yPos = (rowNum - startRow_ + 1) * charHeight_;
+    auto invalidated_rect = event->rect();
 
-    if (yPos < event->rect().y() || yPos > event->rect().y() + event->rect().height()) {
+    auto first_byte_rect = bytePosToRect(rowNum * bytesPerRow_);
+    if (first_byte_rect.bottom() + 1 < invalidated_rect.y()
+        || first_byte_rect.y() > invalidated_rect.y() + invalidated_rect.height()) {
+      // We don't have to redraw current line.
       continue;
     }
 
@@ -721,21 +725,31 @@ void HexEdit::paintEvent(QPaintEvent *event) {
           addressWidth_ + startMargin_ - startPosX_;
       auto byteNum = rowNum * bytesPerRow_ + columnNum;
       if (byteNum < dataBytesCount_) {
+        auto hexRect = bytePosToRect(byteNum);
+        auto asciiRect = bytePosToRect(byteNum, true);
         auto bgc = byteBackroundColorFromPos(byteNum);
-        if (bgc.isValid()) {
-          painter.fillRect(bytePosToRect(byteNum), bgc);
-          painter.fillRect(bytePosToRect(byteNum, true), bgc);
+        bool redraw_hex = invalidated_rect.intersects(hexRect);
+        bool redraw_ascii = invalidated_rect.intersects(asciiRect);
+
+        if (redraw_hex || redraw_ascii) {
+          old_pen = painter.pen();
+          painter.setPen(QPen(byteTextColorFromPos(byteNum)));
+          if (redraw_hex) {
+            if (bgc.isValid()) {
+              painter.fillRect(hexRect, bgc);
+            }
+            painter.drawText(xPos, yPos, hexRepresentationFromBytePos(byteNum));
+          }
+          if (redraw_ascii) {
+            if (bgc.isValid()) {
+              painter.fillRect(asciiRect, bgc);
+            }
+            xPos = (charWidth_ + spaceAfterAsciiByte_) * columnNum + addressWidth_ +
+                hexAreaWidth_ + startMargin_ - startPosX_;
+            painter.drawText(xPos, yPos, asciiRepresentationFromBytePos(byteNum));
+          }
+          painter.setPen(old_pen);
         }
-
-        old_pen = painter.pen();
-
-        painter.setPen(QPen(byteTextColorFromPos(byteNum)));
-        painter.drawText(xPos, yPos, hexRepresentationFromBytePos(byteNum));
-        xPos = (charWidth_ + spaceAfterAsciiByte_) * columnNum + addressWidth_ +
-            hexAreaWidth_ + startMargin_ - startPosX_;
-        painter.drawText(xPos, yPos, asciiRepresentationFromBytePos(byteNum));
-
-        painter.setPen(old_pen);
       }
     }
   }
@@ -761,20 +775,20 @@ void HexEdit::paintEvent(QPaintEvent *event) {
     bool in_ascii_area = current_area_ == WindowArea::ASCII;
     drawBorder(current_position_, 1, true, !in_ascii_area);
     auto rect = bytePosToRect(current_position_, false, cursor_pos_in_byte_);
-    QPainter cursor_painter(viewport());
-    auto old_pen = cursor_painter.pen();
-    auto new_pen = QPen(old_pen.color());
-    if (in_ascii_area) {
-      new_pen.setStyle(Qt::DashLine);
-    }
-    cursor_painter.setPen(new_pen);
-
     if (!rect.isEmpty()) {
+      QPainter cursor_painter(viewport());
+      auto old_pen = cursor_painter.pen();
+      auto new_pen = QPen(old_pen.color());
+      if (in_ascii_area) {
+        new_pen.setStyle(Qt::DashLine);
+      }
+      cursor_painter.setPen(new_pen);
+
       // We have to adjust the size because drawRect semantics differs from the
       // one used by QRect methods.
       cursor_painter.drawRect(rect.adjusted(0, 0, -1, -1));
+      cursor_painter.setPen(old_pen);
     }
-    cursor_painter.setPen(old_pen);
   }
 }
 
@@ -1200,12 +1214,12 @@ void HexEdit::parse(QAction *action) {
 void HexEdit::flipCursorVisibility() {
   if (hasFocus() || !cursor_visible_) {
     cursor_visible_ = !cursor_visible_;
-
-    qint64 y_pos = ((current_position_ / bytesPerRow_) - startRow_)
-                   * charHeight_ + verticalByteBorderMargin_;
-
-    QRect cursor_line(0, y_pos, viewport()->width(), charHeight_ * 2);
-    viewport()->update(cursor_line);
+    auto cursor_hex_rect = bytePosToRect(current_position_, /*ascii=*/false,
+                                         cursor_pos_in_byte_);
+    viewport()->update(cursor_hex_rect);
+    auto cursor_ascii_rect = bytePosToRect(current_position_, /*ascii=*/true,
+                                           cursor_pos_in_byte_);
+    viewport()->update(cursor_ascii_rect);
   }
 }
 
